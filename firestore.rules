@@ -1,96 +1,49 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    // Collection: users
-    // Fields: uid, name, email, role (customer|owner|driver|admin), phone, address
-    //
-    // Collection: restaurants
-    // Fields: ownerId, name, description, logoUrl, category, address, status, commissionRate
-    //
-    // Collection: orders
-    // Fields: customerId, restaurantId, driverId, items, total, status, commission
-    // ===============================================================
-
-    // ===============================================================
-    // Helper Functions
-    // ===============================================================
+    // Helper functions
     function isAuthenticated() {
       return request.auth != null;
     }
-
+    
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
-
+    
     function isAdmin() {
-      return isAuthenticated() &&
+      return isAuthenticated() && 
         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          (request.auth.token.email == "grupoujt@gmail.com" && request.auth.token.email_verified == true));
+         request.auth.token.email == "grupoujt@gmail.com");
     }
 
-    function hasRole(role) {
-      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == role;
+    // User profiles
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if isOwner(userId) || isAdmin();
     }
 
-    // ===============================================================
-    // Validation Functions
-    // ===============================================================
-    function isValidUser(data) {
-      return data.keys().hasAll(['uid', 'name', 'email', 'role']) &&
-             data.uid is string &&
-             data.name is string && data.name.size() < 100 &&
-             data.email is string &&
-             data.role in ['customer', 'owner', 'driver', 'admin'];
-    }
-
-    function isValidRestaurant(data) {
-      return data.keys().hasAll(['ownerId', 'name', 'category', 'status']) &&
-             data.ownerId is string &&
-             data.name is string && data.name.size() < 100 &&
-             data.status in ['pending', 'active', 'suspended'];
-    }
-
-    // ===============================================================
-    // Rules
-    // ===============================================================
-
-    match /users/{uid} {
-      allow read: if isOwner(uid) || isAdmin();
-      allow create: if isAuthenticated() && isOwner(uid) && isValidUser(request.resource.data) && 
-                    (request.resource.data.role != 'admin' || isAdmin());
-      allow update: if isAuthenticated() && isOwner(uid) && isValidUser(request.resource.data) &&
-                    (request.resource.data.role == resource.data.role || isAdmin());
-    }
-
+    // Restaurants
     match /restaurants/{restaurantId} {
-      allow read: if true; // Publicly viewable
-      allow create: if isAuthenticated() && hasRole('owner') && isValidRestaurant(request.resource.data) && 
-                    request.resource.data.ownerId == request.auth.uid;
-      allow update: if isAdmin() || (isAuthenticated() && resource.data.ownerId == request.auth.uid && isValidRestaurant(request.resource.data));
+      allow read: if true;
+      allow write: if isAdmin();
       
+      // Menu items
       match /menu/{itemId} {
         allow read: if true;
-        allow write: if isAdmin() || (isAuthenticated() && get(/databases/$(database)/documents/restaurants/$(restaurantId)).data.ownerId == request.auth.uid);
+        allow write: if isAdmin();
       }
     }
 
+    // Orders
     match /orders/{orderId} {
       allow read: if isAuthenticated() && (
         request.auth.uid == resource.data.customerId || 
-        request.auth.uid == resource.data.driverId || 
-        isAdmin() || 
-        (hasRole('owner') && request.auth.uid == get(/databases/$(database)/documents/restaurants/$(resource.data.restaurantId)).data.ownerId)
+        isAdmin() ||
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'driver')
       );
-      allow create: if isAuthenticated() && request.resource.data.customerId == request.auth.uid;
-      allow update: if isAuthenticated() && (
-        isAdmin() || 
-        request.auth.uid == resource.data.customerId || 
-        request.auth.uid == resource.data.driverId ||
-        (hasRole('owner') && request.auth.uid == get(/databases/$(database)/documents/restaurants/$(resource.data.restaurantId)).data.ownerId)
-      );
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
     }
   }
 }

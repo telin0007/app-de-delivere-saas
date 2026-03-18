@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, FormEvent } from 'react';
 import { 
   Search, 
   ShoppingBag, 
@@ -36,19 +36,24 @@ import {
   addDoc,
   serverTimestamp 
 } from 'firebase/firestore';
-import { Restaurant, MenuItem, Order, UserProfile } from './types';
+import { Restaurant, MenuItem, Order, UserProfile, UserRole } from './types';
 import ImageWithSkeleton from './components/ImageWithSkeleton';
 
 export default function App() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
+  const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   const [selectedRestaurant, setSelectedRestaurant] = useState<Restaurant | null>(null);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [cart, setCart] = useState<{item: MenuItem, quantity: number}[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'home' | 'orders' | 'dashboard'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'orders' | 'dashboard' | 'admin'>('home');
   const [searchQuery, setSearchQuery] = useState('');
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [showRoleSelection, setShowRoleSelection] = useState(false);
+  const [editForm, setEditForm] = useState({ name: '', phone: '', address: '' });
+  const [tempUser, setTempUser] = useState<any>(null);
 
   const seedData = async () => {
     if (!user || user.role !== 'admin') {
@@ -105,26 +110,72 @@ export default function App() {
       if (firebaseUser) {
         const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
         if (userDoc.exists()) {
-          setUser(userDoc.data() as UserProfile);
+          const userData = userDoc.data() as UserProfile;
+          setUser(userData);
+          setEditForm({ 
+            name: userData.name, 
+            phone: userData.phone || '', 
+            address: userData.address || '' 
+          });
         } else {
-          // Create new user profile
-          const newProfile: UserProfile = {
-            uid: firebaseUser.uid,
-            name: firebaseUser.displayName || 'User',
-            email: firebaseUser.email || '',
-            role: firebaseUser.email === 'grupoujt@gmail.com' ? 'admin' : 'customer',
-            createdAt: new Date().toISOString()
-          };
-          await setDoc(doc(db, 'users', firebaseUser.uid), newProfile);
-          setUser(newProfile);
+          // New user - show role selection
+          setTempUser(firebaseUser);
+          setShowRoleSelection(true);
         }
       } else {
         setUser(null);
+        setShowRoleSelection(false);
       }
       setLoading(false);
     });
     return unsubscribe;
   }, []);
+
+  const handleRoleSelection = async (role: UserRole) => {
+    if (!tempUser) return;
+    
+    const newProfile: UserProfile = {
+      uid: tempUser.uid,
+      name: tempUser.displayName || 'User',
+      email: tempUser.email || '',
+      role: tempUser.email === 'grupoujt@gmail.com' ? 'admin' : role,
+      createdAt: new Date().toISOString()
+    };
+    
+    await setDoc(doc(db, 'users', tempUser.uid), newProfile);
+    setUser(newProfile);
+    setEditForm({ name: newProfile.name, phone: '', address: '' });
+    setShowRoleSelection(false);
+    setTempUser(null);
+  };
+
+  // Admin: Fetch all users
+  useEffect(() => {
+    if (user?.role === 'admin' && activeTab === 'admin') {
+      const q = collection(db, 'users');
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const list = snapshot.docs.map(doc => doc.data() as UserProfile);
+        setAllUsers(list);
+      });
+      return unsubscribe;
+    }
+  }, [user, activeTab]);
+
+  const handleUpdateProfile = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+
+    try {
+      const updatedProfile = { ...user, ...editForm };
+      await setDoc(doc(db, 'users', user.uid), updatedProfile);
+      setUser(updatedProfile);
+      setIsEditingProfile(false);
+      alert("Perfil atualizado com sucesso!");
+    } catch (error) {
+      console.error("Erro ao atualizar perfil:", error);
+      alert("Erro ao atualizar perfil.");
+    }
+  };
 
   // Restaurants Listener
   useEffect(() => {
@@ -163,7 +214,7 @@ export default function App() {
     setSelectedRestaurant(null);
   };
 
-  const handleTabChange = (tab: 'home' | 'orders' | 'dashboard') => {
+  const handleTabChange = (tab: 'home' | 'orders' | 'dashboard' | 'admin') => {
     setActiveTab(tab);
     setSelectedRestaurant(null);
   };
@@ -289,8 +340,17 @@ export default function App() {
 
             {user ? (
               <div className="flex items-center gap-3">
+                {user.role === 'admin' && (
+                  <button 
+                    onClick={() => setActiveTab('admin')}
+                    className={`p-2 rounded-full transition-colors ${activeTab === 'admin' ? 'bg-red-50 text-red-500' : 'hover:bg-gray-100 text-gray-600'}`}
+                    title="Painel Admin"
+                  >
+                    <Shield className="w-6 h-6" />
+                  </button>
+                )}
                 <button 
-                  onClick={() => handleTabChange('dashboard')}
+                  onClick={() => setActiveTab('dashboard')}
                   className={`p-2 rounded-full transition-colors ${activeTab === 'dashboard' ? 'bg-red-50 text-red-500' : 'hover:bg-gray-100 text-gray-600'}`}
                 >
                   <LayoutDashboard className="w-6 h-6" />
@@ -489,92 +549,130 @@ export default function App() {
             {user ? (
               <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm max-w-2xl">
                 <div className="flex items-center gap-6 mb-8">
-                  <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center border-4 border-white shadow-md">
-                    <UserIcon className="w-12 h-12 text-gray-400" />
+                  <div className="w-24 h-24 bg-red-500 rounded-full flex items-center justify-center border-4 border-white shadow-md text-white text-3xl font-bold">
+                    {user.name[0]}
                   </div>
                   <div>
                     <h3 className="text-2xl font-bold">{user.name}</h3>
                     <p className="text-gray-500">{user.email}</p>
                     <span className="inline-block mt-2 px-3 py-1 bg-red-50 text-red-500 text-xs font-bold uppercase rounded-full">
-                      {user.role}
+                      {user.role === 'customer' ? 'Cliente' : user.role === 'owner' ? 'Dono de Restaurante' : user.role === 'driver' ? 'Entregador' : 'Administrador'}
                     </span>
                   </div>
                 </div>
 
-                <div className="space-y-4">
-                  <div className="p-4 bg-gray-50 rounded-2xl flex items-center justify-between">
+                {isEditingProfile ? (
+                  <form onSubmit={handleUpdateProfile} className="space-y-6">
                     <div>
-                      <h4 className="font-bold">Endereço de Entrega</h4>
-                      <p className="text-sm text-gray-500">{user.address || 'Nenhum endereço cadastrado'}</p>
+                      <label className="block text-sm font-bold text-gray-700 mb-2">Nome Completo</label>
+                      <input 
+                        type="text" 
+                        value={editForm.name}
+                        onChange={(e) => setEditForm({...editForm, name: e.target.value})}
+                        className="w-full px-6 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-red-500 outline-none"
+                        required
+                      />
                     </div>
-                    <button className="text-red-500 text-sm font-bold">Editar</button>
-                  </div>
-                  <div className="p-4 bg-gray-50 rounded-2xl flex items-center justify-between">
                     <div>
-                      <h4 className="font-bold">Telefone</h4>
-                      <p className="text-sm text-gray-500">{user.phone || 'Nenhum telefone cadastrado'}</p>
+                      <label className="block text-sm font-bold text-gray-700 mb-2">Telefone</label>
+                      <input 
+                        type="tel" 
+                        value={editForm.phone}
+                        onChange={(e) => setEditForm({...editForm, phone: e.target.value})}
+                        placeholder="(00) 00000-0000"
+                        className="w-full px-6 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-red-500 outline-none"
+                      />
                     </div>
-                    <button className="text-red-500 text-sm font-bold">Editar</button>
-                  </div>
-                </div>
+                    <div>
+                      <label className="block text-sm font-bold text-gray-700 mb-2">Endereço de Entrega</label>
+                      <input 
+                        type="text" 
+                        value={editForm.address}
+                        onChange={(e) => setEditForm({...editForm, address: e.target.value})}
+                        placeholder="Rua, número, bairro, cidade"
+                        className="w-full px-6 py-4 bg-gray-50 rounded-2xl border-none focus:ring-2 focus:ring-red-500 outline-none"
+                      />
+                    </div>
+                    <div className="flex gap-4 pt-4">
+                      <button 
+                        type="submit"
+                        className="flex-1 bg-red-500 text-white py-4 rounded-2xl font-bold shadow-lg shadow-red-200 hover:bg-red-600 transition-all"
+                      >
+                        Salvar Alterações
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={() => setIsEditingProfile(false)}
+                        className="flex-1 bg-gray-100 text-gray-600 py-4 rounded-2xl font-bold hover:bg-gray-200 transition-all"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <>
+                    <div className="space-y-4">
+                      <div className="p-4 bg-gray-50 rounded-2xl flex items-center justify-between">
+                        <div>
+                          <h4 className="font-bold">Endereço de Entrega</h4>
+                          <p className="text-sm text-gray-500">{user.address || 'Nenhum endereço cadastrado'}</p>
+                        </div>
+                        <button onClick={() => setIsEditingProfile(true)} className="text-red-500 text-sm font-bold">Editar</button>
+                      </div>
+                      <div className="p-4 bg-gray-50 rounded-2xl flex items-center justify-between">
+                        <div>
+                          <h4 className="font-bold">Telefone</h4>
+                          <p className="text-sm text-gray-500">{user.phone || 'Nenhum telefone cadastrado'}</p>
+                        </div>
+                        <button onClick={() => setIsEditingProfile(true)} className="text-red-500 text-sm font-bold">Editar</button>
+                      </div>
+                    </div>
 
-                {user.role === 'admin' && (
-                  <div className="mt-10 pt-10 border-t border-gray-100">
-                    <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
-                      <Shield className="w-6 h-6 text-red-500" />
-                      Painel de Administração
-                    </h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="p-6 bg-red-50 rounded-3xl border border-red-100">
-                        <div className="flex items-center justify-between mb-4">
-                          <Store className="w-8 h-8 text-red-500" />
-                          <span className="text-2xl font-bold text-red-600">{restaurants.length}</span>
+                    {user.role === 'admin' && (
+                      <div className="mt-10 pt-10 border-t border-gray-100">
+                        <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
+                          <Shield className="w-6 h-6 text-red-500" />
+                          Painel de Administração
+                        </h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="p-6 bg-red-50 rounded-3xl border border-red-100">
+                            <div className="flex items-center justify-between mb-4">
+                              <Store className="w-8 h-8 text-red-500" />
+                              <span className="text-2xl font-bold text-red-600">{restaurants.length}</span>
+                            </div>
+                            <h4 className="font-bold text-red-900">Restaurantes Ativos</h4>
+                            <p className="text-sm text-red-600/70">Gerencie os parceiros da plataforma</p>
+                            <button 
+                              onClick={() => setActiveTab('admin')}
+                              className="mt-4 w-full py-2 bg-white text-red-500 rounded-xl font-bold text-sm shadow-sm hover:shadow-md transition-all"
+                            >
+                              Ver Painel Completo
+                            </button>
+                          </div>
+                          <div className="p-6 bg-gray-50 rounded-3xl border border-gray-100">
+                            <div className="flex items-center justify-between mb-4">
+                              <ShoppingBag className="w-8 h-8 text-gray-400" />
+                              <span className="text-2xl font-bold text-gray-600">0</span>
+                            </div>
+                            <h4 className="font-bold text-gray-900">Pedidos Hoje</h4>
+                            <p className="text-sm text-gray-500">Acompanhe as vendas em tempo real</p>
+                            <button className="mt-4 w-full py-2 bg-white text-gray-400 rounded-xl font-bold text-sm shadow-sm cursor-not-allowed">
+                              Em breve
+                            </button>
+                          </div>
                         </div>
-                        <h4 className="font-bold text-red-900">Restaurantes Ativos</h4>
-                        <p className="text-sm text-red-600/70">Gerencie os parceiros da plataforma</p>
-                        <button className="mt-4 w-full py-2 bg-white text-red-500 rounded-xl font-bold text-sm shadow-sm hover:shadow-md transition-all">
-                          Ver Todos
-                        </button>
                       </div>
-                      <div className="p-6 bg-gray-50 rounded-3xl border border-gray-100">
-                        <div className="flex items-center justify-between mb-4">
-                          <ShoppingBag className="w-8 h-8 text-gray-400" />
-                          <span className="text-2xl font-bold text-gray-600">0</span>
-                        </div>
-                        <h4 className="font-bold text-gray-900">Pedidos Hoje</h4>
-                        <p className="text-sm text-gray-500">Acompanhe as vendas em tempo real</p>
-                        <button className="mt-4 w-full py-2 bg-white text-gray-400 rounded-xl font-bold text-sm shadow-sm cursor-not-allowed">
-                          Em breve
-                        </button>
-                      </div>
-                    </div>
-                    
-                    <div className="mt-6 p-6 bg-white border border-gray-100 rounded-3xl shadow-sm">
-                      <h4 className="font-bold mb-4">Ações Rápidas</h4>
-                      <div className="flex flex-wrap gap-3">
-                        <button 
-                          onClick={seedData}
-                          className="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-bold hover:bg-gray-200 transition-all flex items-center gap-2"
-                        >
-                          <Plus className="w-4 h-4" />
-                          Popular Banco de Dados
-                        </button>
-                        <button className="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-bold hover:bg-gray-200 transition-all flex items-center gap-2">
-                          <UserIcon className="w-4 h-4" />
-                          Gerenciar Usuários
-                        </button>
-                      </div>
-                    </div>
-                  </div>
+                    )}
+
+                    <button 
+                      onClick={handleLogout}
+                      className="mt-10 flex items-center gap-2 text-red-500 font-bold hover:bg-red-50 px-6 py-3 rounded-2xl transition-all"
+                    >
+                      <LogOut className="w-5 h-5" />
+                      Sair da conta
+                    </button>
+                  </>
                 )}
-
-                <button 
-                  onClick={handleLogout}
-                  className="mt-10 flex items-center gap-2 text-red-500 font-bold hover:bg-red-50 px-6 py-3 rounded-2xl transition-all"
-                >
-                  <LogOut className="w-5 h-5" />
-                  Sair da conta
-                </button>
               </div>
             ) : (
               <div className="bg-white p-12 rounded-3xl text-center border border-gray-100 shadow-sm">
@@ -586,6 +684,183 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* Admin Tab Content */}
+      {activeTab === 'admin' && user?.role === 'admin' && (
+        <main className="pt-32 pb-32 px-6">
+          <div className="max-w-7xl mx-auto">
+            <div className="flex items-center justify-between mb-12">
+              <div>
+                <h1 className="text-4xl font-bold mb-2">Painel de Administração</h1>
+                <p className="text-gray-500">Controle total da plataforma iFood Clone</p>
+              </div>
+              <Shield className="w-12 h-12 text-red-500" />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-12">
+              <div className="bg-white p-8 rounded-[40px] border border-gray-100 shadow-sm">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="p-4 bg-red-50 rounded-2xl">
+                    <Store className="w-8 h-8 text-red-500" />
+                  </div>
+                  <span className="text-3xl font-bold">{restaurants.length}</span>
+                </div>
+                <h3 className="text-lg font-bold mb-1">Restaurantes</h3>
+                <p className="text-gray-500 text-sm">Parceiros cadastrados</p>
+              </div>
+              <div className="bg-white p-8 rounded-[40px] border border-gray-100 shadow-sm">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="p-4 bg-blue-50 rounded-2xl">
+                    <ShoppingBag className="w-8 h-8 text-blue-500" />
+                  </div>
+                  <span className="text-3xl font-bold">0</span>
+                </div>
+                <h3 className="text-lg font-bold mb-1">Pedidos</h3>
+                <p className="text-gray-500 text-sm">Vendas totais hoje</p>
+              </div>
+              <div className="bg-white p-8 rounded-[40px] border border-gray-100 shadow-sm">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="p-4 bg-green-50 rounded-2xl">
+                    <UserIcon className="w-8 h-8 text-green-500" />
+                  </div>
+                  <span className="text-3xl font-bold">{allUsers.length}</span>
+                </div>
+                <h3 className="text-lg font-bold mb-1">Usuários</h3>
+                <p className="text-gray-500 text-sm">Contas ativas</p>
+              </div>
+            </div>
+
+            <div className="bg-white p-10 rounded-[40px] border border-gray-100 shadow-sm mb-12">
+              <h2 className="text-2xl font-bold mb-8">Usuários Cadastrados</h2>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-gray-100">
+                      <th className="pb-4 font-bold text-gray-400 text-sm uppercase tracking-wider">Usuário</th>
+                      <th className="pb-4 font-bold text-gray-400 text-sm uppercase tracking-wider">E-mail</th>
+                      <th className="pb-4 font-bold text-gray-400 text-sm uppercase tracking-wider">Função</th>
+                      <th className="pb-4 font-bold text-gray-400 text-sm uppercase tracking-wider">Cadastro</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {allUsers.map((u) => (
+                      <tr key={u.uid} className="group hover:bg-gray-50 transition-colors">
+                        <td className="py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-red-100 text-red-500 rounded-full flex items-center justify-center font-bold">
+                              {u.name[0]}
+                            </div>
+                            <span className="font-bold text-gray-900">{u.name}</span>
+                          </div>
+                        </td>
+                        <td className="py-4 text-gray-500">{u.email}</td>
+                        <td className="py-4">
+                          <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${
+                            u.role === 'admin' ? 'bg-purple-100 text-purple-600' :
+                            u.role === 'owner' ? 'bg-blue-100 text-blue-600' :
+                            u.role === 'driver' ? 'bg-orange-100 text-orange-600' :
+                            'bg-green-100 text-green-600'
+                          }`}>
+                            {u.role === 'customer' ? 'Cliente' : u.role === 'owner' ? 'Dono' : u.role === 'driver' ? 'Entregador' : 'Admin'}
+                          </span>
+                        </td>
+                        <td className="py-4 text-gray-400 text-sm">
+                          {u.createdAt ? new Date(u.createdAt).toLocaleDateString('pt-BR') : '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="bg-white p-10 rounded-[40px] border border-gray-100 shadow-sm">
+              <h2 className="text-2xl font-bold mb-8">Ações de Sistema</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                <button 
+                  onClick={seedData}
+                  className="flex flex-col items-center justify-center p-8 bg-gray-50 rounded-3xl border-2 border-dashed border-gray-200 hover:border-red-500 hover:bg-red-50 transition-all group"
+                >
+                  <Plus className="w-10 h-10 text-gray-300 group-hover:text-red-500 mb-4" />
+                  <span className="font-bold text-gray-600 group-hover:text-red-600">Popular Banco de Dados</span>
+                  <span className="text-xs text-gray-400 mt-2">Adicionar dados de teste</span>
+                </button>
+                <div className="flex flex-col items-center justify-center p-8 bg-gray-50 rounded-3xl border border-gray-100 opacity-50 cursor-not-allowed">
+                  <LayoutDashboard className="w-10 h-10 text-gray-300 mb-4" />
+                  <span className="font-bold text-gray-600">Relatórios Financeiros</span>
+                  <span className="text-xs text-gray-400 mt-2">Em desenvolvimento</span>
+                </div>
+                <div className="flex flex-col items-center justify-center p-8 bg-gray-50 rounded-3xl border border-gray-100 opacity-50 cursor-not-allowed">
+                  <Filter className="w-10 h-10 text-gray-300 mb-4" />
+                  <span className="font-bold text-gray-600">Configurações Globais</span>
+                  <span className="text-xs text-gray-400 mt-2">Em desenvolvimento</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </main>
+      )}
+
+      {/* Role Selection Modal */}
+      <AnimatePresence>
+        {showRoleSelection && (
+          <>
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100]"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="fixed inset-0 flex items-center justify-center z-[101] p-6"
+            >
+              <div className="bg-white w-full max-w-2xl rounded-[48px] p-10 sm:p-16 overflow-hidden relative">
+                <div className="absolute top-0 left-0 w-full h-2 bg-red-500" />
+                <div className="text-center mb-12">
+                  <h2 className="text-4xl font-bold mb-4">Bem-vindo ao iFood!</h2>
+                  <p className="text-gray-500 text-lg">Como você deseja utilizar nossa plataforma?</p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                  <button 
+                    onClick={() => handleRoleSelection('customer')}
+                    className="flex flex-col items-center p-8 bg-gray-50 rounded-[32px] hover:bg-red-50 hover:ring-2 hover:ring-red-500 transition-all group"
+                  >
+                    <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-sm mb-4 group-hover:scale-110 transition-transform">
+                      <ShoppingBag className="w-8 h-8 text-red-500" />
+                    </div>
+                    <span className="font-bold text-gray-900">Cliente</span>
+                    <span className="text-xs text-gray-400 text-center mt-2">Quero pedir comida</span>
+                  </button>
+                  <button 
+                    onClick={() => handleRoleSelection('owner')}
+                    className="flex flex-col items-center p-8 bg-gray-50 rounded-[32px] hover:bg-red-50 hover:ring-2 hover:ring-red-500 transition-all group"
+                  >
+                    <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-sm mb-4 group-hover:scale-110 transition-transform">
+                      <Store className="w-8 h-8 text-red-500" />
+                    </div>
+                    <span className="font-bold text-gray-900">Restaurante</span>
+                    <span className="text-xs text-gray-400 text-center mt-2">Quero vender comida</span>
+                  </button>
+                  <button 
+                    onClick={() => handleRoleSelection('driver')}
+                    className="flex flex-col items-center p-8 bg-gray-50 rounded-[32px] hover:bg-red-50 hover:ring-2 hover:ring-red-500 transition-all group"
+                  >
+                    <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-sm mb-4 group-hover:scale-110 transition-transform">
+                      <Truck className="w-8 h-8 text-red-500" />
+                    </div>
+                    <span className="font-bold text-gray-900">Entregador</span>
+                    <span className="text-xs text-gray-400 text-center mt-2">Quero fazer entregas</span>
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* Cart Drawer */}
       <AnimatePresence>
@@ -694,20 +969,87 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Role Selection Modal */}
+      <AnimatePresence>
+        {showRoleSelection && (
+          <>
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100]"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="fixed inset-0 flex items-center justify-center z-[101] p-6"
+            >
+              <div className="bg-white w-full max-w-2xl rounded-[48px] p-10 sm:p-16 overflow-hidden relative shadow-2xl">
+                <div className="absolute top-0 left-0 w-full h-2 bg-red-500" />
+                <div className="text-center mb-12">
+                  <h2 className="text-4xl font-bold mb-4">Bem-vindo ao iFood!</h2>
+                  <p className="text-gray-500 text-lg">Como você deseja utilizar nossa plataforma?</p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                  <button 
+                    onClick={() => handleRoleSelection('customer')}
+                    className="flex flex-col items-center p-8 bg-gray-50 rounded-[32px] hover:bg-red-50 hover:ring-2 hover:ring-red-500 transition-all group"
+                  >
+                    <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-sm mb-4 group-hover:scale-110 transition-transform">
+                      <ShoppingBag className="w-8 h-8 text-red-500" />
+                    </div>
+                    <span className="font-bold text-gray-900">Cliente</span>
+                    <span className="text-xs text-gray-400 text-center mt-2">Quero pedir comida</span>
+                  </button>
+                  <button 
+                    onClick={() => handleRoleSelection('owner')}
+                    className="flex flex-col items-center p-8 bg-gray-50 rounded-[32px] hover:bg-red-50 hover:ring-2 hover:ring-red-500 transition-all group"
+                  >
+                    <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-sm mb-4 group-hover:scale-110 transition-transform">
+                      <Store className="w-8 h-8 text-red-500" />
+                    </div>
+                    <span className="font-bold text-gray-900">Restaurante</span>
+                    <span className="text-xs text-gray-400 text-center mt-2">Quero vender comida</span>
+                  </button>
+                  <button 
+                    onClick={() => handleRoleSelection('driver')}
+                    className="flex flex-col items-center p-8 bg-gray-50 rounded-[32px] hover:bg-red-50 hover:ring-2 hover:ring-red-500 transition-all group"
+                  >
+                    <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-sm mb-4 group-hover:scale-110 transition-transform">
+                      <Truck className="w-8 h-8 text-red-500" />
+                    </div>
+                    <span className="font-bold text-gray-900">Entregador</span>
+                    <span className="text-xs text-gray-400 text-center mt-2">Quero fazer entregas</span>
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
       {/* Bottom Navigation (Mobile) */}
       <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 py-3 flex justify-between items-center z-40">
-        <button onClick={() => handleTabChange('home')} className={`flex flex-col items-center gap-1 ${activeTab === 'home' ? 'text-red-500' : 'text-gray-400'}`}>
+        <button onClick={() => setActiveTab('home')} className={`flex flex-col items-center gap-1 ${activeTab === 'home' ? 'text-red-500' : 'text-gray-400'}`}>
           <Store className="w-6 h-6" />
           <span className="text-[10px] font-bold uppercase">Início</span>
         </button>
-        <button onClick={() => handleTabChange('orders')} className={`flex flex-col items-center gap-1 ${activeTab === 'orders' ? 'text-red-500' : 'text-gray-400'}`}>
+        <button onClick={() => setActiveTab('orders')} className={`flex flex-col items-center gap-1 ${activeTab === 'orders' ? 'text-red-500' : 'text-gray-400'}`}>
           <ShoppingBag className="w-6 h-6" />
           <span className="text-[10px] font-bold uppercase">Pedidos</span>
         </button>
-        <button onClick={() => handleTabChange('dashboard')} className={`flex flex-col items-center gap-1 ${activeTab === 'dashboard' ? 'text-red-500' : 'text-gray-400'}`}>
+        <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 ${activeTab === 'dashboard' ? 'text-red-500' : 'text-gray-400'}`}>
           <LayoutDashboard className="w-6 h-6" />
           <span className="text-[10px] font-bold uppercase">Painel</span>
         </button>
+        {user?.role === 'admin' && (
+          <button onClick={() => setActiveTab('admin')} className={`flex flex-col items-center gap-1 ${activeTab === 'admin' ? 'text-red-500' : 'text-gray-400'}`}>
+            <Shield className="w-6 h-6" />
+            <span className="text-[10px] font-bold uppercase">Admin</span>
+          </button>
+        )}
       </nav>
     </div>
   );
