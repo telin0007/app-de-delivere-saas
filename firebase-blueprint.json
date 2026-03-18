@@ -1,0 +1,79 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Platform users (Customers, Restaurant Owners, Drivers, Admins)",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["customer", "owner", "driver", "admin"] },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "name", "email", "role"]
+    },
+    "Restaurant": {
+      "title": "Restaurant",
+      "description": "Restaurants registered on the platform",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "description": "UID of the owner" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "logoUrl": { "type": "string", "format": "uri" },
+        "category": { "type": "string" },
+        "address": { "type": "string" },
+        "location": { "type": "object", "properties": { "lat": { "type": "number" }, "lng": { "type": "number" } } },
+        "rating": { "type": "number" },
+        "deliveryFee": { "type": "number" },
+        "commissionRate": { "type": "number", "description": "Platform commission percentage" },
+        "isPatronized": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["pending", "active", "suspended"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "name", "category", "status"]
+    },
+    "MenuItem": {
+      "title": "MenuItem",
+      "description": "Food items in a restaurant's menu",
+      "type": "object",
+      "properties": {
+        "restaurantId": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "price": { "type": "number" },
+        "imageUrl": { "type": "string", "format": "uri" },
+        "category": { "type": "string" },
+        "available": { "type": "boolean" }
+      },
+      "required": ["restaurantId", "name", "price"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer orders",
+      "type": "object",
+      "properties": {
+        "customerId": { "type": "string" },
+        "restaurantId": { "type": "string" },
+        "driverId": { "type": "string" },
+        "items": { "type": "array", "items": { "type": "object" } },
+        "total": { "type": "number" },
+        "commission": { "type": "number" },
+        "deliveryFee": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "preparing", "delivering", "completed", "cancelled"] },
+        "paymentStatus": { "type": "string", "enum": ["pending", "paid", "failed"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["customerId", "restaurantId", "total", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": { "schema": "User", "description": "User profiles" },
+    "/restaurants/{restaurantId}": { "schema": "Restaurant", "description": "Restaurant details" },
+    "/restaurants/{restaurantId}/menu/{itemId}": { "schema": "MenuItem", "description": "Menu items for a restaurant" },
+    "/orders/{orderId}": { "schema": "Order", "description": "Orders placed on the platform" }
+  }
+}

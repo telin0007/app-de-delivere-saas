@@ -1,0 +1,7 @@
+{
+  "name": "FoodDash SaaS Marketplace",
+  "description": "A complete food delivery platform with multi-tenant restaurant support, real-time tracking, and monetization features.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
